@@ -6,6 +6,28 @@
 
 An optional shell hook makes this automatic: every command you run triggers a notification when it crosses the threshold. You can also send a push to your phone through any HTTP endpoint (e.g. an [ntfy](https://ntfy.sh/) topic).
 
+## Installation
+
+### Install script
+
+```bash
+curl -sSL https://raw.githubusercontent.com/itsrainingmani/reporter/main/install.sh | bash
+```
+
+Then add to your shell rc:
+
+```bash
+source ~/.local/share/reporter/reporter-auto.sh
+```
+
+### From source
+
+```bash
+git clone https://github.com/itsrainingmani/reporter.git
+cd reporter
+make install
+```
+
 ## Why this approach
 
 - Lightweight single binary built with the Go standard library.
@@ -64,24 +86,12 @@ reporter -- sleep 15
 
 The payload is a short text body with title, status, duration, and the command string. If the push fails, it logs a terse `[push]` line to stderr and still delivers the desktop notification.
 
-## Build
+## Development
 
-```
-GOCACHE=$(pwd)/.cache/go-build go build -o reporter ./cmd/reporter
-```
-
-To embed a version string (recommended for releases):
-
-```
-GOCACHE=$(pwd)/.cache/go-build go build -ldflags "-X main.Version=1.0.0" -o reporter ./cmd/reporter
-```
-
-Using a workspace-local `GOCACHE` avoids sandbox restrictions on the default Go build cache. The resulting `reporter` binary can be added to your `$PATH` (e.g. `mv reporter ~/.local/bin/`).
-
-## Testing
-
-```
-GOCACHE=$(pwd)/.cache/go-build go test -v ./cmd/reporter
+```bash
+make build    # build binary
+make test     # run tests
+make install  # install to ~/.local/bin
 ```
 
 ## Notification behavior

@@ -2,6 +2,10 @@
 # Automatic terminal notifications via reporter.
 # Source this file from your shell (zsh or bash) and the last command will trigger a notification when it runs longer than the threshold.
 
+# Guard against multiple sourcing.
+[[ -n "$_REPORTER_LOADED" ]] && return 0
+_REPORTER_LOADED=1
+
 : "${REPORTER_BIN:=$(command -v reporter)}"
 : "${REPORTER_THRESHOLD:=10s}"
 : "${REPORTER_ALWAYS:=}"
@@ -26,13 +30,26 @@ _reporter_should_exclude() {
 
   [[ -z "$REPORTER_EXCLUDE" ]] && return 1
 
-  local IFS=','
-  for pattern in $REPORTER_EXCLUDE; do
-    # Trim whitespace
-    pattern="${pattern#"${pattern%%[![:space:]]*}"}"
-    pattern="${pattern%"${pattern##*[![:space:]]}"}"
-    [[ "$first_word" == "$pattern" ]] && return 0
-  done
+  if [[ -n "$ZSH_VERSION" ]]; then
+    # Use zsh-native array splitting
+    local -a patterns
+    patterns=("${(@s:,:)REPORTER_EXCLUDE}")
+    for pattern in "${patterns[@]}"; do
+      # Trim whitespace
+      pattern="${pattern#"${pattern%%[![:space:]]*}"}"
+      pattern="${pattern%"${pattern##*[![:space:]]}"}"
+      [[ "$first_word" == "$pattern" ]] && return 0
+    done
+  else
+    # Bash: use IFS splitting
+    local IFS=','
+    for pattern in $REPORTER_EXCLUDE; do
+      # Trim whitespace
+      pattern="${pattern#"${pattern%%[![:space:]]*}"}"
+      pattern="${pattern%"${pattern##*[![:space:]]}"}"
+      [[ "$first_word" == "$pattern" ]] && return 0
+    done
+  fi
   return 1
 }
 
@@ -53,6 +70,14 @@ _reporter_now_ms() {
 _reporter_start() {
   # Avoid recursive triggers from our own functions.
   [[ $_reporter_guard -eq 1 ]] && return
+
+  # In bash, DEBUG trap fires for every simple command in a compound statement.
+  # Only record the FIRST command's timestamp; don't overwrite on subsequent ones.
+  # This ensures "sleep 5 && echo done" measures from "sleep 5", not "echo done".
+  if [[ -n "$BASH_VERSION" && -n "$_reporter_started" ]]; then
+    return
+  fi
+
   _reporter_cmd="$1"
 
   # Skip excluded commands early.
@@ -106,6 +131,34 @@ if [[ -n "$ZSH_VERSION" ]]; then
   add-zsh-hook precmd _reporter_finish
 elif [[ -n "$BASH_VERSION" ]]; then
   # Bash: use DEBUG trap for preexec and PROMPT_COMMAND for postcmd.
-  trap '_reporter_start "$BASH_COMMAND"' DEBUG
-  PROMPT_COMMAND="_reporter_finish${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+  # Only set DEBUG trap if not already trapping (avoid overwriting user's trap).
+  _reporter_existing_debug_trap="$(trap -p DEBUG)"
+  if [[ -z "$_reporter_existing_debug_trap" ]]; then
+    trap '_reporter_start "$BASH_COMMAND"' DEBUG
+  else
+    # Chain with existing DEBUG trap by saving and executing it directly.
+    # We store the full trap command and use eval to execute it, avoiding
+    # fragile regex extraction that breaks on quoted strings.
+    _reporter_old_debug_trap="$_reporter_existing_debug_trap"
+    trap '_reporter_start "$BASH_COMMAND"; eval "$_reporter_old_debug_trap"' DEBUG
+  fi
+  unset _reporter_existing_debug_trap
+
+  # Bash 5.1+ supports PROMPT_COMMAND as array, but only use array form if
+  # PROMPT_COMMAND is already an array or unset. If it's a string, preserve
+  # string form for compatibility with other tools.
+  if [[ ${BASH_VERSINFO[0]} -gt 5 || (${BASH_VERSINFO[0]} -eq 5 && ${BASH_VERSINFO[1]} -ge 1) ]]; then
+    if [[ "$(declare -p PROMPT_COMMAND 2>/dev/null)" == "declare -a"* ]]; then
+      # Already an array, prepend to it
+      PROMPT_COMMAND=("_reporter_finish" "${PROMPT_COMMAND[@]}")
+    elif [[ -z "${PROMPT_COMMAND:-}" ]]; then
+      # Unset or empty, use array form for modern Bash
+      PROMPT_COMMAND=("_reporter_finish")
+    else
+      # It's a string, keep it as a string for compatibility
+      PROMPT_COMMAND="_reporter_finish; $PROMPT_COMMAND"
+    fi
+  else
+    PROMPT_COMMAND="_reporter_finish${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+  fi
 fi
